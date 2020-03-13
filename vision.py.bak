@@ -1,0 +1,999 @@
+# -*- coding: utf-8 -*-
+"""
+/***************************************************************************
+ VISION
+                                 A QGIS plugin
+ This plugin graduate points and lines layers with a defined ramp color, generate heatmaps and recreate the grid behaviour through animations 
+                              -------------------
+        begin                : 2017-02-22
+        git sha              : $Format:%H$
+        copyright            : (C) 2017 by Marco Jara Jiménez
+        email                : marco.jara@ucr.ac.cr
+ ***************************************************************************/
+
+/***************************************************************************
+ *                                                                         *
+ *   This program is free software; you can redistribute it and/or modify  *
+ *   it under the terms of the GNU General Public License as published by  *
+ *   the Free Software Foundation; either version 2 of the License, or     *
+ *   (at your option) any later version.                                   *
+ *                                                                         *
+ ***************************************************************************/
+"""
+#from PyQt4.QtCore import QSettings, QTranslator, qVersion, QCoreApplication
+#from PyQt4.QtGui import QAction, QIcon
+# Initialize Qt resources from file resources.py
+import resources
+from PyQt4.QtCore import *
+from PyQt4.QtGui import *
+from qgis.core import *
+from qgis.gui import *
+from qgis.utils import *
+from qgis.analysis import *
+import processing
+import time
+import qgis
+
+#from datetime import datetime, date, time, timedelta
+#import calendar
+# Import the code for the dialog
+from vision_dialog import VISIONDialog
+import os.path
+from electric_features_selection import Ui_Selection
+
+
+class VISION:
+
+    """QGIS Plugin Implementation."""
+
+    def __init__(self, iface):
+        """Constructor.
+
+        :param iface: An interface instance that will be passed to this class
+            which provides the hook by which you can manipulate the QGIS
+            application at run time.
+        :type iface: QgsInterface
+        """
+        # Save reference to the QGIS interface
+        self.iface = iface
+        # initialize plugin directory
+        self.plugin_dir = os.path.dirname(__file__)
+        # initialize locale
+        locale = QSettings().value('locale/userLocale')[0:2]
+        locale_path = os.path.join(
+            self.plugin_dir,
+            'i18n',
+            'VISION_{}.qm'.format(locale))
+        
+        if os.path.exists(locale_path):
+            self.translator = QTranslator()
+            self.translator.load(locale_path)
+
+            if qVersion() > '4.3.3':
+                QCoreApplication.installTranslator(self.translator)
+
+            
+        # if locale != (u'es'): # esp
+            # locale = (u'en')  #eng
+    
+                
+        # Create the dialog (after translation) and keep reference
+        self.dlg = VISIONDialog()
+        self.selection = Ui_Selection()
+        # Declare instance attributes
+        self.actions = []
+        self.menu = self.tr(u'&VISION')
+        # TODO: We are going to let the user set this up in a future iteration
+        self.toolbar = self.iface.addToolBar(u'VISION')
+        self.toolbar.setObjectName(u'VISION')
+        
+        self.dlg.AtributesButton.clicked.connect(self.IdentifyAtribut)
+        self.dlg.IdentifyButton.clicked.connect(self.IdentifyFeatures)
+        
+        self.dlg.pushButtonAdre.clicked.connect(self.select_output_folder)
+        self.dlg.pushButtonAdreL.clicked.connect(self.select_output_folderL)
+        self.dlg.pushMatchButton.clicked.connect(self.matchFeatures)
+        self.dlg.pushMatchTx.clicked.connect(self.matchFeaturesTx)
+        self.dlg.CategButton.clicked.connect(self.VoltCateg)
+        self.dlg.HeatButton.clicked.connect(self.Hotest)
+        self.dlg.GraduateLButton.clicked.connect(self.linesGradua)
+        self.dlg.CategTxButton.clicked.connect(self.categTx)
+        self.dlg.PoiAnimat.clicked.connect(self.PoiAni)
+        self.dlg.LinAnimat.clicked.connect(self.LinAni)
+        self.dlg.button_box.helpRequested.connect(self.show_help)
+
+    # noinspection PyMethodMayBeStatic
+    def tr(self, message):
+        """Get the translation for a string using Qt translation API.
+
+        We implement this ourselves since we do not inherit QObject.
+
+        :param message: String for translation.
+        :type message: str, QString
+
+        :returns: Translated version of message.
+        :rtype: QString
+        """
+        # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
+        return QCoreApplication.translate('VISION', message)
+        
+        
+
+    def IdentifyAtribut(self): # Método para llamar el main del attributes selection
+        #This block obtains the attributes in the active layer and append them the in the combo boxes
+        selectedLayer = iface.activeLayer()
+        datosLayer = selectedLayer.getFeatures()
+        prop =selectedLayer.dataProvider()
+        attr_list = []
+        fields= prop.fields()
+        for field in fields:
+            attr_list.append(field.name())
+        global Att1
+        global Att2
+        global Att3
+        
+        #self.selection.combo_Atrib1.clear()		
+        self.selection.combo_Atrib1.addItems(attr_list)
+        Att1 = self.selection.combo_Atrib1.currentText()
+        #self.selection.combo_Atrib2.clear()		
+        self.selection.combo_Atrib2.addItems(attr_list)
+        Att2 = self.selection.combo_Atrib2.currentText()
+        #self.selection.combo_Atrib3.clear()		
+        self.selection.combo_Atrib3.addItems(attr_list)
+                
+        
+        self.selection.exec_()
+        
+             
+             
+    def add_action(
+        self,
+        icon_path,
+        text,
+        callback,
+        enabled_flag=True,
+        add_to_menu=True,
+        add_to_toolbar=True,
+        status_tip=None,
+        whats_this=None,
+        parent=None):
+        """Add a toolbar icon to the toolbar.
+
+        :param icon_path: Path to the icon for this action. Can be a resource
+            path (e.g. ':/plugins/foo/bar.png') or a normal file system path.
+        :type icon_path: str
+
+        :param text: Text that should be shown in menu items for this action.
+        :type text: str
+
+        :param callback: Function to be called when the action is triggered.
+        :type callback: function
+
+        :param enabled_flag: A flag indicating if the action should be enabled
+            by default. Defaults to True.
+        :type enabled_flag: bool
+
+        :param add_to_menu: Flag indicating whether the action should also
+            be added to the menu. Defaults to True.
+        :type add_to_menu: bool
+
+        :param add_to_toolbar: Flag indicating whether the action should also
+            be added to the toolbar. Defaults to True.
+        :type add_to_toolbar: bool
+
+        :param status_tip: Optional text to show in a popup when mouse pointer
+            hovers over the action.
+        :type status_tip: str
+
+        :param parent: Parent widget for the new action. Defaults None.
+        :type parent: QWidget
+
+        :param whats_this: Optional text to show in the status bar when the
+            mouse pointer hovers over the action.
+
+        :returns: The action that was created. Note that the action is also
+            added to self.actions list.
+        :rtype: QAction
+        """
+
+        # Create the dialog (after translation) and keep reference
+        #self.dlg = VISIONDialog()
+
+        icon = QIcon(icon_path)
+        action = QAction(icon, text, parent)
+        action.triggered.connect(callback)
+        action.setEnabled(enabled_flag)
+
+        if status_tip is not None:
+            action.setStatusTip(status_tip)
+
+        if whats_this is not None:
+            action.setWhatsThis(whats_this)
+
+        if add_to_toolbar:
+            self.toolbar.addAction(action)
+
+        if add_to_menu:
+            self.iface.addPluginToMenu(
+                self.menu,
+                action)
+
+        self.actions.append(action)
+
+        return action
+
+    def initGui(self):
+        """Create the menu entries and toolbar icons inside the QGIS GUI."""
+
+        icon_path = ':/plugins/VISION/icon.png'
+        self.add_action(
+            icon_path,
+            text=self.tr(u'VISION'),
+            callback=self.run,
+            parent=self.iface.mainWindow())
+    
+    def getAttributeIndex(self, aLayer, attrName): # Crea el atributo y obtiene el ID
+        #Find the attribute index, adding a new Int column, if necessary
+        # TODO: If attrName is longer than 10, something fails later.  Move validation to a signal that checks storageType in the UI.
+        if len(attrName) > 10 and aLayer.storageType() == 'ESRI Shapefile':
+            self.iface.messageBar().pushMessage("Error", "For ESRI Shapefiles, the maximum length of any attribute name is 10. Please choose a shorter attribute name.", level=QgsMessageBar.CRITICAL)
+            return -3
+        AttrIdx = aLayer.dataProvider().fieldNameIndex(attrName)
+        if AttrIdx == -1: # attribute doesn't exist, so create it
+            caps = aLayer.dataProvider().capabilities()
+            if caps & QgsVectorDataProvider.AddAttributes:
+                res = aLayer.dataProvider().addAttributes([QgsField(attrName, QVariant.String)])
+                AttrIdx = aLayer.dataProvider().fieldNameIndex(attrName)
+                aLayer.updateFields()
+                if AttrIdx == -1:
+                    self.iface.messageBar().pushMessage("Error", "Failed to create attribute!", level=QgsMessageBar.CRITICAL)
+                    return -1
+            else:
+                self.iface.messageBar().pushMessage("Error", "Failed to add attribute!", level=QgsMessageBar.CRITICAL)
+                return -1
+        else:
+            pass
+        return AttrIdx
+        
+    def show_help(self):
+        """Display application help to the user."""
+   
+        help_file = 'file:///%s/help/Manual_VISION.pdf' % self.plugin_dir
+        # For testing path:
+        #QMessageBox.information(None, 'Help File', help_file)
+        # noinspection PyCallByClass,PyTypeChecker
+        QDesktopServices.openUrl(QUrl(help_file))
+        
+    def matchFeatures(self): # Método para realizar el match de features entre la capa de lineCurrents y las capas de líneas
+        print ('ingreso al match')
+        layers = self.iface.legendInterface().layers()
+        print (type(layers[0]))
+        layer_list = []
+        layer_list.append("")
+        for layer in layers:
+            layer_list.append(layer.name())
+        layers.insert(0,"")
+        
+        LineCurrents = QgsMapLayerRegistry.instance().mapLayersByName('lineCurrents')[0]
+        flowLayer = LineCurrents.getFeatures()
+        z = LineCurrents.dataProvider().attributeIndexes()
+        sn = LineCurrents.dataProvider().fieldNameIndex('PFsnap')
+        zv = int(len(z)) -1
+        print('capas PFs total zv',zv)
+        print('atri snap sn',sn)
+        
+        Dicti = {}
+        for m in flowLayer:
+            PFlist = []
+            Dicti[str(m['DSSName'])]=[]
+            if sn != -1:
+                
+                for k in range(zv-1): # Es el total de atributos de flujo - el Snapshot
+                    PFlist.append(m['PF'+str(k)])
+                #PFlist.append(m['PFsnap'])
+                Dicti[str(m['DSSName'])].append(PFlist)
+                Dicti[str(m['DSSName'])].append(m['PFsnap'])
+            
+            elif sn == -1:
+                for k in range(zv): # El valor de zv sera el tope ya que no hay snapshot
+                    PFlist.append(m['PF'+str(k)])
+            
+                Dicti[str(m['DSSName'])].append(PFlist)
+            
+        
+        Lineslayers = []
+        if self.dlg.comboBox_Lins.currentIndex() != 0:
+            Lineslayers.append(layers[self.dlg.comboBox_Lins.currentIndex()])
+        elif self.dlg.comboBox_Lins2.currentIndex() != 0:
+            Lineslayers.append(layers[self.dlg.comboBox_Lins2.currentIndex()])
+        elif self.dlg.comboBox_Lins3.currentIndex() != 0:
+            Lineslayers.append(layers[self.dlg.comboBox_Lins3.currentIndex()])
+        elif self.dlg.comboBox_Lins4.currentIndex() != 0:
+            Lineslayers.append(layers[self.dlg.comboBox_Lins4.currentIndex()])
+        
+        
+        #print (len(Lineslayers))
+        #print(Dicti)
+        for lay in Lineslayers:
+            caps = lay.dataProvider().capabilities() #es para averiguar las capacidades de la capa 
+            lay.startEditing()   
+            if sn != -1:
+                
+                for k in range(zv-1):  #el range debería ser la longitud de atributos que posee la capa lineCurrents sin contar Snap
+                    Idx = self.getAttributeIndex(lay, 'PF'+str(k))
+                    #print(k)
+                    if caps & QgsVectorDataProvider.ChangeAttributeValues:
+                        
+                        lineFeat = lay.getFeatures()
+                        for line in lineFeat:
+                            #print(len(Dicti[line['DSSName']]))
+                            a=Dicti[line['DSSName']][0][k]
+                           
+                            lay.changeAttributeValue(line.id(), Idx, a) #id, Index, Value str(Dicti[line['DSSName']][0][k])
+                            
+                Idx = self.getAttributeIndex(lay, 'PFsnap')
+                
+                if caps & QgsVectorDataProvider.ChangeAttributeValues:
+                        
+                    lineFeat = lay.getFeatures()
+                    for line in lineFeat:
+                        print(line)
+                        #print(len(Dicti[line['DSSName']]))
+                        try:
+                            a=Dicti[line['DSSName']][1] 
+                            lay.changeAttributeValue(line.id(), Idx, a) #id, Index, Value str(Dicti[line['DSSName']][0][k])
+                        except KeyError:
+                            pass
+                    #lay.commitChanges()
+                    #lay.updateFields()
+                
+                lay.commitChanges()
+                lay.updateFields()
+            
+            
+            elif sn == -1:
+                for k in range(zv):  #el range debería ser la longitud de atributos que posee la capa lineCurrents
+                        #item.append(str(Dicti[item['DSSName'][k]))#Att1 son los pf's
+                        
+                    Idx = self.getAttributeIndex(lay, 'PF'+str(k))
+                    #print(Idx,k)
+                    if caps & QgsVectorDataProvider.ChangeAttributeValues:
+                        
+                        lineFeat = lay.getFeatures()
+                        for line in lineFeat:
+                            #print(len(Dicti[line['DSSLine']]))
+                            a=Dicti[line['DSSName']][0][k]
+                           
+                            lay.changeAttributeValue(line.id(), Idx, a) #id, Index, Value str(Dicti[line['DSSLine']][0][k])
+                lay.commitChanges()
+                lay.updateFields()
+            
+        print ('Proceso terminado exitosamente')
+        iface.messageBar().pushMessage("INFO", QCoreApplication.translate('menu', 'Proceso terminado exitosamente'), level=QgsMessageBar.INFO, duration=3)  
+    
+    
+    def matchFeaturesTx(self): # Método para realizar el match de features entre la capa de lineCurrents y las capas de líneas
+        print ('ingreso al match')
+        layers = self.iface.legendInterface().layers()
+        print (type(layers[0]))
+        layer_list = []
+        layer_list.append("")
+        for layer in layers:
+            layer_list.append(layer.name())
+        layers.insert(0,"")
+        
+        txCapacities = QgsMapLayerRegistry.instance().mapLayersByName('txCapacities')[0]
+        flowLayer = txCapacities.getFeatures()
+        z = txCapacities.dataProvider().attributeIndexes()
+        sn = txCapacities.dataProvider().fieldNameIndex('PFsnap')
+        zv = int(len(z)) -1
+        print('capas PFs total zv',zv)
+        print('atri snap sn',sn)
+        
+        Dicti = {}
+        for m in flowLayer:
+            PFlist = []
+            Dicti[str(m['DSSName'])]=[]
+            if sn != -1:
+                
+                for k in range(zv-1): # Es el total de atributos de flujo - el Snapshot
+                    PFlist.append(m['PF'+str(k)])
+                #PFlist.append(m['PFsnap'])
+                Dicti[str(m['DSSName'])].append(PFlist)
+                Dicti[str(m['DSSName'])].append(m['PFsnap'])
+            
+            elif sn == -1:
+                for k in range(zv): # El valor de zv sera el tope ya que no hay snapshot
+                    PFlist.append(m['PF'+str(k)])
+            
+                Dicti[str(m['DSSName'])].append(PFlist)
+            
+        
+        Lineslayers = []
+        if self.dlg.comboBox_Tx1.currentIndex() != 0:
+            Lineslayers.append(layers[self.dlg.comboBox_Tx1.currentIndex()])
+        elif self.dlg.comboBox_Tx2.currentIndex() != 0:
+            Lineslayers.append(layers[self.dlg.comboBox_Tx2.currentIndex()])
+        elif self.dlg.comboBox_Tx3.currentIndex() != 0:
+            Lineslayers.append(layers[self.dlg.comboBox_Tx3.currentIndex()])
+        elif self.dlg.comboBox_Tx4.currentIndex() != 0:
+            Lineslayers.append(layers[self.dlg.comboBox_Tx4.currentIndex()])
+        
+        
+        print(Lineslayers)
+        #print(Dicti)
+        for lay in Lineslayers:
+            caps = lay.dataProvider().capabilities() #es para averiguar las capacidades de la capa 
+            lay.startEditing()   
+            if sn != -1:
+                
+                for k in range(zv-1):  #el range debería ser la longitud de atributos que posee la capa lineCurrents sin contar Snap
+                    Idx = self.getAttributeIndex(lay, 'PF'+str(k))
+                    #print(k)
+                    if caps & QgsVectorDataProvider.ChangeAttributeValues:
+                        
+                        lineFeat = lay.getFeatures()
+                        for line in lineFeat:
+                            #print(len(Dicti[line['DSSLine']]))
+                            a=Dicti[line['DSSName']][0][k]
+                           
+                            lay.changeAttributeValue(line.id(), Idx, a) #id, Index, Value str(Dicti[line['DSSLine']][0][k])
+                            
+                Idx = self.getAttributeIndex(lay, 'PFsnap')
+                if caps & QgsVectorDataProvider.ChangeAttributeValues:
+                        
+                    lineFeat = lay.getFeatures()
+                    for line in lineFeat:
+                        print(line)
+                        #print(len(Dicti[line['DSSName']]))
+                        try:
+                            a=Dicti[line['DSSName']][1] 
+                            lay.changeAttributeValue(line.id(), Idx, a) #id, Index, Value str(Dicti[line['DSSName']][0][k])
+                        except KeyError:
+                            pass
+                
+                lay.commitChanges()
+                lay.updateFields()
+            
+            
+            elif sn == -1:
+                for k in range(zv):  #el range debería ser la longitud de atributos que posee la capa lineCurrents
+                        #item.append(str(Dicti[item['DSSName'][k]))#Att1 son los pf's
+                        
+                    Idx = self.getAttributeIndex(lay, 'PF'+str(k))
+                    #print(Idx,k)
+                    if caps & QgsVectorDataProvider.ChangeAttributeValues:
+                        
+                        lineFeat = lay.getFeatures()
+                        for line in lineFeat:
+                            #print(len(Dicti[line['DSSLine']]))
+                            a=Dicti[line['DSSName']][0][k]
+                           
+                            lay.changeAttributeValue(line.id(), Idx, a) #id, Index, Value str(Dicti[line['DSSLine']][0][k])
+                lay.commitChanges()
+                lay.updateFields()
+            
+        print ('Proceso terminado exitosamente')
+        iface.messageBar().pushMessage("INFO", QCoreApplication.translate('menu', 'Proceso terminado exitosamente'), level=QgsMessageBar.INFO, duration=3)  
+    
+    
+    def VoltCateg(self):
+        
+     ########################Codigo para realizar la clasificacion individualizada de los simbolos en la capa de puntos
+        
+        
+        # IndexLayer = self.dlg.comboBox_CR.currentIndex()
+        # #selectedLayer = layers[IndexLayer]
+        selectedLayer = iface.activeLayer()
+        datosLayer = selectedLayer.getFeatures()
+        
+        # prop =selectedLayer.dataProvider()
+        # attr_list = []
+        # fields= prop.fields()
+        # for field in fields:
+            # attr_list.append(field.name())
+        
+        # self.dlg.ColorRampAttri.addItems(attr_list)
+        # expression = self.dlg.ColorRampAttri.currentText()
+                            
+                        
+        #if IndexLayer != 0: #Se verifica que en la IndexLayer se haya elegido una capa
+        
+        layer = selectedLayer
+            
+        # Es definido values cuyo formato es: label, lower value, upper value, color name
+        # para la identificación dentro de 'MaxV' (uno de los atributos de la tabla) 
+                    
+                    
+        # VL = self.dlg.lineVL.text()
+        # if not VL:
+            # VL = '0, 114.9'
+        # VL=map(float, VL.split(","))
+        L = self.dlg.lineL.text()
+        if not L:
+            L = '0, 0.9499'
+        L=map(float, L.split(","))    
+        O = self.dlg.lineO.text()
+        if not O:
+            O = '0.95, 1.0499'
+        O=map(float, O.split(","))        
+        H = self.dlg.lineH.text()
+        if not H:
+            H = '1.05, 6'
+        H=map(float, H.split(","))            
+        # VH = self.dlg.lineVH.text()
+        # if not VH:
+             # VH = '127,160'
+        # VH=map(float, VH.split(","))                
+        
+        values = (
+            #('VeryLow', VL[0], VL[1], 'purple'), Below 0.95 pu
+            ('Tension Baja', L[0], L[1], 'orange', 1.7),
+            ('Aceptable', O[0], O[1], 'cyan', 2),
+            ('Tension Alta', H[0], H[1], 'red', 2.7),
+            #('VeryHigh', VH[0], VH[1], 'red'), Above 1.05 pu  Between 0.95 pu and 1.05 pu
+            )
+
+        # se crea una rampa graduada segun los valores en values
+        ranges = []
+                            
+        for label, lower, upper, color, size in values:
+            symbol = QgsSymbolV2.defaultSymbol(layer.geometryType()) #inicializa el symbol con valores default
+            symbol.setColor(QColor(color)) #Se le asigna un color segun el diccionario "values"
+            symbol.setSize(size)
+            rng = QgsRendererRangeV2(lower, upper, symbol, label) #Se almacena el diccionario para que sea reconocido como el rango para render
+            ranges.append(rng)
+
+        # se crea el render y se le asigna a la capa escogida por el usuario 
+        #expression = self.dlg.ColorRampAttri.currentIndex()
+        expression = self.dlg.ColorRampAttri.currentText()
+        if self.dlg.ColorRampAttri.currentIndex() == 0: #if not expression:
+            expression = 'V0' # Atributo base para el renderizado
+        
+        renderer = QgsGraduatedSymbolRendererV2(expression, ranges) #se ejecuta el render graduado basandose en el atributo y segun el rango de colores
+        layer.setRendererV2(renderer)
+
+        self.iface.mapCanvas().refresh() # se ejecuta un refrescado de las propiedades de la capa
+        layer.triggerRepaint() #Activa los cambios inmediatamente al finalizar el plugin
+             
+        self.dlg.close()
+       
+                 
+    def  linesGradua(self):
+        #################################################Codigo para realizar el categorizado de las capas de lineas por su flujo de potencia
+    
+         #IndexLayer = self.dlg.comboBox_PF.currentIndex()
+         #selectedLayer = layers[IndexLayer]
+         selectedLayer = iface.activeLayer()
+         datosLayer = selectedLayer.getFeatures()
+            
+         values = (
+         ('Por debajo de 80%', 0, 0.7999, 'black', 0.25),
+         ('Sobre 80% Abajo de 100%', 0.8, 0.9999, '#e99400', 0.7),
+         ('Sobre 100% Abajo de 130%', 1, 1.2999, 'red', 1.1),
+         ('Sobre 130%', 1.3, 8, 'red', 1.8),
+         )
+         #if IndexLayer != 0: #Se verifica que en la IndexLayer se haya elegido una capa
+         ranges = []
+           
+         for label, lower, upper, color, width in values:
+             symbol = QgsSymbolV2.defaultSymbol(selectedLayer.geometryType())
+             symbol.setColor(QColor(color))
+             #symbol = QgsLineSymbolV2.defaultSymbol(selectedLayer.geometryType())
+             symbol.setWidth(width)
+             rng = QgsRendererRangeV2(lower, upper, symbol, label)
+             ranges.append(rng)
+
+          
+         # create the renderer and assign it to a layer (in this case the actual layer is the chossen by the user)
+         expressionPF = self.dlg.PFAttri.currentText()
+         if self.dlg.PFAttri.currentIndex() == 0: #if not expression:
+             pass # No ejecuta nada ya que no se escogío
+         
+        
+         GraduatedSize = QgsGraduatedSymbolRendererV2.setGraduatedMethod
+         renderer = QgsGraduatedSymbolRendererV2(expressionPF, ranges)
+         selectedLayer.setRendererV2(renderer)    
+         iface.mapCanvas().refresh() # se ejecuta un refrescado de las propiedades de la capa
+         selectedLayer.triggerRepaint() #Activa los cambios inmediatamente al finalizar el plugin
+         
+         self.dlg.close()
+      
+    def categTx(self):
+    
+        #################################################Codigo para realizar el categorizado de los puntos segun su cargabilidad
+   
+        
+         #IndexLayer = self.dlg.comboBox_PF.currentIndex()
+         #selectedLayer = layers[IndexLayer]
+         selectedLayer = iface.activeLayer()
+         datosLayer = selectedLayer.getFeatures()
+         
+         values = (
+         ('Por debajo de 80%', 0, 0.7999, 'black', 1.7),
+         ('Sobre 80% Abajo de 100%', 0.8, 0.9999, '#e99400', 1.9),
+         ('Sobre 100% Abajo de 130%', 1, 1.2999, 'red', 2.3),
+         ('Sobre 130%', 1.3, 8, 'red', 2.7),
+         )
+         #if IndexLayer != 0: #Se verifica que en la IndexLayer se haya elegido una capa
+         ranges = []
+                            
+         for label, lower, upper, color, size in values:
+            symbol = QgsSymbolV2.defaultSymbol(selectedLayer.geometryType()) #inicializa el symbol con valores default
+            symbol.setColor(QColor(color)) #Se le asigna un color segun el diccionario "values"
+            symbol.setSize(size)
+            rng = QgsRendererRangeV2(lower, upper, symbol, label) #Se almacena el diccionario para que sea reconocido como el rango para render
+            ranges.append(rng)
+          
+         # create the renderer and assign it to a layer (in this case the actual layer is the chossen by the user)
+         
+         expressionLoad = self.dlg.TxLoad.currentText()
+         if self.dlg.TxLoad.currentIndex() == 0: #if not expression:
+             pass # No ejecuta nada ya que no se escogío
+         
+         renderer = QgsGraduatedSymbolRendererV2(expressionLoad, ranges) #se ejecuta el render graduado basandose en el atributo y segun el rango de colores
+         selectedLayer.setRendererV2(renderer)
+         self.iface.mapCanvas().refresh() # se ejecuta un refrescado de las propiedades de la capa
+         selectedLayer.triggerRepaint() #Activa los cambios inmediatamente al finalizar el plugin
+         
+         self.dlg.close()
+
+            
+    def Hotest(self):
+        ######################################################Codigo para realizar los heatmaps en capas de puntos
+       
+    
+        #IndexLayer = self.dlg.comboBox_HM.currentIndex()
+
+        
+        #if IndexLayer != 0: #Se verifica que en la IndexLayer se haya elegido una capa
+        
+        # selectedLayer = layers[IndexLayer]
+        # layer = selectedLayer
+        selectedLayer = iface.activeLayer()
+        datosLayer = selectedLayer.getFeatures()
+        layer = selectedLayer
+
+        properties={'color1':'#eeeee6', 'color2':'#b30000', 'stops' : '0.25;#fda553:0.50;#fc6742:0.75;#e34a33'}
+        #Se inicializa el diccionario que contiene la rampa continua de coloracion, cuyo formato es: color inferior,
+        #color superior y los pasos (donde se nombra el porcentaje del maximo valor)
+        ramp = QgsVectorGradientColorRampV2.create(properties)
+        # se crea una categoria o rampa con base a las propierties
+
+        # create the renderer and assign it to a layer (in this case the actual layer is the chossen by the user)
+        expressionHeat = self.dlg.HeatmapAttri.currentText() # attribute name to be classified
+        if self.dlg.HeatmapAttri.currentIndex() == 0: #if not expression:
+            expression = 'V0' # Atributo base para el renderizado
+        renderer = QgsHeatmapRenderer() #tipo de renderizado
+        renderer.setWeightExpression(expressionHeat) #atributo base para el renderizado
+        renderer.setRenderQuality(1)#Se setea la calidad del render (menor numero == mayor calidad)
+        renderer.setRadius(4.9) #Setea el radio de agrupamiento dependiendo del zoom
+        #renderer.setRadiusUnit(QgsSymbolV2.'Pixel') #setea el tipo de simbolo a pixel ya que por default se hace por mm
+        renderer.setColorRamp(ramp) #
+        Mxvalue = self.dlg.lineHM.text()
+        if not Mxvalue:
+            Mxvalue = '0'
+        renderer.setMaximumValue(100.000000*float(Mxvalue)) #Setea el valor maximo del atributo con el que se realiza la rampa
+        
+        layer.setRendererV2(renderer)
+
+        iface.mapCanvas().refresh()
+        layer.triggerRepaint()
+        
+        self.dlg.close()
+              
+    def PoiAni(self):
+            
+        ##################################Codigo para realizar las animaciones del comportamiento diario de una capa de puntos    
+              
+        IndexLayer = self.dlg.comboBox_AN.currentIndex()
+        
+        if IndexLayer != 0: #Se verifica que en la IndexLayer se haya elegido una capa
+            
+            selectedLayer = layers[IndexLayer]
+            layer = selectedLayer
+            
+            w = 1440/96  #1440/i #tmuestreo, donde i es la cantidad de columnas de muestras       60*24=1440 minutos del dia
+
+            #El usuario solo puede ingresar hora de 00->24
+            Adre = self.dlg.lineAdre.text()
+
+            HDow = int(self.dlg.lineHDow.text())
+            HHig = int(self.dlg.lineHHig.text())
+            MDow = HDow * 60 
+            MHig = HHig * 60 
+
+            # if Muser ==0:
+            # Xten= 0
+            # else:
+            XDow = MDow/w
+            XHig = MHig/w
+            # values = (
+                # ('Very Low', 1, 2.999, '#178a3a', 1.2),
+                # ('Low', 3, 4.9999, 'purple', 1.5),
+                # ('Optimal', 5, 6.9999, 'blue', 1.8),
+                # ('High', 7, 8.9999, 'orange', 2.2),
+                # ('VeryHigh', 9, 10, 'red', 2.7),
+                # )
+            values = (
+                ('Tension Baja', 0, 0.9499, 'orange', 1.7),
+                ('Aceptable', 0.95, 1.0499, 'cyan', 2),
+                ('Tension Alta', 1.05, 10, 'red', 2.7),
+                )
+
+                
+            
+                # create a category for each item in values
+            ranges = []
+            for label, lower, upper, color, size in values:
+                symbol = QgsSymbolV2.defaultSymbol(layer.geometryType())
+                symbol.setColor(QColor(color))
+                symbol.setSize(size)
+                rng = QgsRendererRangeV2(lower, upper, symbol, label)
+                ranges.append(rng)  
+                
+            Vect = []  #Vector vacio para atributos             
+            for i in range(XDow, XHig+1): # range(XDow, XHig+1) range(0, 11)
+                atri = 'V'+str(i)
+                Vect.append(atri)
+            #print (Vect)
+            Hora= HDow
+            minu = 0        
+
+            qgis.utils.iface.actionShowPythonDialog().trigger() #codigo empleado para desplegar la consola
+            qgis.utils.iface.actionShowPythonDialog().trigger()
+            
+            for item in Vect:
+                #for item in atri: #busca en la capa el atributo llamado Tension para realizar la labor con cada item del atributo
+                
+                        #se realiza el render de la capa de puntos
+                        
+                    # create the renderer and assign it to a layer (in this case the actual layer is the chossen by the user)
+                expression = item # attribute name to be classified
+                renderer = QgsGraduatedSymbolRendererV2(expression, ranges)
+                layer.setRendererV2(renderer)
+                iface.mapCanvas().refresh()
+                layer.triggerRepaint()
+                print(item)
+                time.sleep(1)
+                
+                expression = item # attribute name to be classified
+                renderer = QgsGraduatedSymbolRendererV2(expression, ranges)
+                layer.setRendererV2(renderer)
+                iface.mapCanvas().refresh()
+                layer.triggerRepaint()
+                print(item)
+                #etiq = float(item[7])*1440/96
+                iface.messageBar().pushMessage("INFO", QCoreApplication.translate('menu', "Valores de Tension ")+str(Hora)+':'+str(minu), level=QgsMessageBar.INFO, duration=2)
+                iface.mapCanvas().saveAsImage(str(Adre)+"\Tension"+str(Hora)+"_"+str(minu)+".png",None,"PNG")
+                #iface.mapCanvas().saveAsImage("D:\Universidad\l ciclo 2016\Proyecto\Archivos QGIS\PapaEmeritus"+item+".png",None,"PNG")
+                if minu==45:
+                    Hora+=1
+                    minu = 0
+                else:
+                    minu += 15 
+                time.sleep(1)
+                #iface.mapCanvas().saveAsImage(Adre+"\tension"+str(Hora)+"_"+str(minu)+".png",None,"PNG")
+    
+        self.dlg.close()
+     
+            
+    def LinAni(self):       
+        ###################################################################Codigo para animacion de capas de lineas
+                   
+        IndexLayer = self.dlg.comboBox_ANL.currentIndex()
+        
+        if IndexLayer != 0: #Se verifica que en la IndexLayer se haya elegido una capa
+            
+            selectedLayer = layers[IndexLayer]
+            layer = selectedLayer
+            
+            w = 1440/96  #1440/i #tmuestreo, donde i es la cantidad de columnas de muestras       60*24=1440 minutos del dia
+
+            #El usuario solo puede ingresar hora de 00->24
+            AdreL = self.dlg.lineAdreL.text()
+
+            HDow = int(self.dlg.lineHDowL.text())
+            HHig = int(self.dlg.lineHHigL.text())
+            MDow = HDow * 60 
+            MHig = HHig * 60 
+
+            # if Muser ==0:
+            # Xten= 0
+            # else:
+            XDow = MDow/w
+            XHig = MHig/w
+            values = (
+            ('Por debajo de 80%', 0, 0.7999, 'black', 0.25),
+            ('Sobre 80% Abajo de 100%', 0.8, 0.9999, '#e99400', 0.7),
+            ('Sobre 100% Abajo de 130%', 1, 1.2999, 'red', 1.1),
+            ('Sobre 130%', 1.3, 8, 'red', 1.8),
+            )
+            
+                # create a category for each item in values
+            ranges = []
+            for label, lower, upper, color, width in values:
+                symbol = QgsSymbolV2.defaultSymbol(selectedLayer.geometryType())
+                symbol.setColor(QColor(color))
+                #symbol = QgsLineSymbolV2.defaultSymbol(selectedLayer.geometryType())
+                symbol.setWidth(width)
+                rng = QgsRendererRangeV2(lower, upper, symbol, label)
+                ranges.append(rng)
+                
+            Vect = []  #Vector vacio para atributos             
+            for i in range(XDow, XHig+1): # range(XDow, XHig+1) range(0, 11)
+                atri = 'PF'+str(i)
+                Vect.append(atri)
+            #print (Vect)
+            Hora= HDow
+            minu = 0        
+
+            qgis.utils.iface.actionShowPythonDialog().trigger() #codigo empleado para desplegar la consola
+            qgis.utils.iface.actionShowPythonDialog().trigger()
+            
+            for item in Vect:
+                
+                        #se realiza el render de la capa de puntos
+                        
+                    # create the renderer and assign it to a layer (in this case the actual layer is the chossen by the user)
+                expression = item # attribute name to be classified
+                GraduatedSize = QgsGraduatedSymbolRendererV2.setGraduatedMethod
+                renderer = QgsGraduatedSymbolRendererV2(expression, ranges)
+                selectedLayer.setRendererV2(renderer)    
+                iface.mapCanvas().refresh() # se ejecuta un refrescado de las propiedades de la capa
+                selectedLayer.triggerRepaint() #Activa los cambios inmediatamente al finalizar el plugin
+                print(item)
+                time.sleep(1)
+                
+                GraduatedSize = QgsGraduatedSymbolRendererV2.setGraduatedMethod
+                renderer = QgsGraduatedSymbolRendererV2(expression, ranges)
+                selectedLayer.setRendererV2(renderer)    
+                iface.mapCanvas().refresh() # se ejecuta un refrescado de las propiedades de la capa
+                selectedLayer.triggerRepaint() #Activa los cambios inmediatamente al finalizar el plugin
+                print(item)
+                iface.messageBar().pushMessage("INFO", QCoreApplication.translate('menu', "Flujo de Potencia ")+str(Hora)+':'+str(minu), level=QgsMessageBar.INFO, duration=2)
+                iface.mapCanvas().saveAsImage(str(AdreL)+"\Flujo"+str(Hora)+"_"+str(minu)+".png",None,"PNG")
+                if minu==45:
+                    Hora+=1
+                    minu = 0
+                else: 
+                    minu += 15 
+                time.sleep(1)
+                #iface.mapCanvas().saveAsImage(str(AdreL)+"\flujo"+str(Hora)+"_"+str(minu)+".png",None,"PNG")
+                #iface.mapCanvas().saveAsImage("D:\Universidad\l ciclo 2016\Proyecto\Archivos QGIS\prueba"+item+".png",None,"PNG")
+        
+        self.dlg.close()
+       
+            
+            
+
+    def select_output_folder(self):
+        """Método para seleccionar la carpeta de destino"""
+        foldername = QFileDialog.getExistingDirectory(self.dlg, QCoreApplication.translate('menu', "Seleccione carpeta de destino "), "",)
+        self.dlg.lineAdre.setText(foldername)
+        
+    def select_output_folderL(self):
+        """Método para seleccionar la carpeta de destino"""
+        foldername = QFileDialog.getExistingDirectory(self.dlg, QCoreApplication.translate('menu', "Seleccione carpeta de destino "), "",)
+        self.dlg.lineAdreL.setText(foldername)        
+        
+        
+    def IdentifyFeatures(self):
+        #0= capas de puntos
+        #1= capas de lineas
+        
+        selectedLayer = iface.activeLayer()
+        activLayer = qgis.utils.iface.activeLayer()
+        datosLayer = activLayer.selectedFeatures()
+        
+        
+        Att1 = self.selection.combo_Atrib1.currentText()
+        Att2 = self.selection.combo_Atrib2.currentText()
+        Att3 = self.selection.combo_Atrib3.currentText()
+        
+        sym = selectedLayer.geometryType()
+        for item in datosLayer:
+            if sym == 0:
+                iface.messageBar().pushMessage("INFO", Att1+': '+str(item[Att1])+' // '+Att2+': '+str(item[Att2])+' // '+Att3+': '+str(item[Att3]), level=QgsMessageBar.INFO, duration=8)
+                break
+            elif sym== 1:
+                iface.messageBar().pushMessage("INFO", Att1+': '+str(item[Att1])+' // '+Att2+': '+str(item[Att2])+' // '+Att3+': '+str(item[Att3]), level=QgsMessageBar.INFO, duration=8)
+                break
+        
+        
+    def unload(self):
+        """Removes the plugin menu item and icon from QGIS GUI."""
+        for action in self.actions:
+            self.iface.removePluginMenu(
+                self.tr(u'&VISION'),
+                action)
+            self.iface.removeToolBarIcon(action)
+        # remove the toolbar
+        del self.toolbar
+
+
+    def run(self):
+        """Run method that performs all the real work"""
+        # show the dialog
+        self.dlg.show()
+        #Carga los nombres de las capas actualmente abiertas y las muestra en las listas desplegables 
+        layers = self.iface.legendInterface().layers()
+        layer_list = []
+        layer_list.append("")
+        for layer in layers:
+            layer_list.append(layer.name())
+        layers.insert(0,"")
+        #self.dlg.comboBox_CR.clear()		
+        #self.dlg.comboBox_CR.addItems(layer_list)
+        #self.dlg.comboBox_PF.clear()		
+        #self.dlg.comboBox_PF.addItems(layer_list)
+        #self.dlg.comboBox_HM.clear()		
+        #self.dlg.comboBox_HM.addItems(layer_list)
+        self.dlg.comboBox_AN.clear()		
+        self.dlg.comboBox_AN.addItems(layer_list)
+        self.dlg.comboBox_ANL.clear()		
+        self.dlg.comboBox_ANL.addItems(layer_list)
+        self.dlg.comboBox_Lins.clear()		
+        self.dlg.comboBox_Lins.addItems(layer_list)
+        self.dlg.comboBox_Lins2.clear()		
+        self.dlg.comboBox_Lins2.addItems(layer_list)
+        self.dlg.comboBox_Lins3.clear()		
+        self.dlg.comboBox_Lins3.addItems(layer_list)
+        self.dlg.comboBox_Lins4.clear()		
+        self.dlg.comboBox_Lins4.addItems(layer_list)
+        self.dlg.ColorRampAttri.clear()		
+        self.dlg.HeatmapAttri.clear()		
+        self.dlg.PFAttri.clear()		
+        
+        self.dlg.TxLoad.clear()		
+        self.dlg.comboBox_Tx1.clear()		
+        self.dlg.comboBox_Tx1.addItems(layer_list)
+        self.dlg.comboBox_Tx2.clear()		
+        self.dlg.comboBox_Tx2.addItems(layer_list)
+        self.dlg.comboBox_Tx3.clear()		
+        self.dlg.comboBox_Tx3.addItems(layer_list)
+        self.dlg.comboBox_Tx4.clear()		
+        self.dlg.comboBox_Tx4.addItems(layer_list)
+        #self.dlg.ColorRamp.clear()
+        #self.dlg.PowerFlow.setCheckState(0)
+            
+        
+        #datosLayer = selectedLayer.getFeatures()
+        try: 
+            selectedLayer = iface.activeLayer()
+            prop =selectedLayer.dataProvider()
+            attr_list = []
+            fields= prop.fields()
+            for field in fields:
+                attr_list.append(field.name())
+            
+            self.dlg.ColorRampAttri.addItems(attr_list)
+            expression = self.dlg.ColorRampAttri.currentText()
+            
+            self.dlg.HeatmapAttri.addItems(attr_list)
+            expressionHeat = self.dlg.HeatmapAttri.currentText()
+            
+            self.dlg.PFAttri.addItems(attr_list)
+            expressionPF = self.dlg.PFAttri.currentText()
+            
+            self.dlg.TxLoad.addItems(attr_list)
+            expressionLoad = self.dlg.TxLoad.currentText()
+        
+        except AttributeError:
+            iface.messageBar().pushMessage("Alerta", QCoreApplication.translate('menu', "Debe escoger una capa antes de utilizar la herramienta"), level=QgsMessageBar.WARNING, duration=5)
+            
+            
+        # Run the dialog event loop
+        result = self.dlg.exec_()
+        # See if OK was pressed
+    
+        if result:
+                
+                
+            
+                
+           
+                        
+            
+            
+            pass
