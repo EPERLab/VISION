@@ -1112,8 +1112,8 @@ class VISION(object):
             # if Muser ==0:
             # Xten= 0
             # else:
-            XDow = int( MDow/w )
-            XHig = int( MHig/w )
+            XDow = int(MDow/w)
+            XHig = int(MHig/w)
             values = (
             ('Por debajo de 80%', 0, 0.7999, 'black', 0.25),
             ('Sobre 80% Abajo de 100%', 0.8, 0.9999, '#e99400', 0.7),
